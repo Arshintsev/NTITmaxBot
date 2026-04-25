@@ -27,15 +27,17 @@ def register_ticket_creation(dp: Dispatcher):
         company_data = check_inn_in_db(inn)
 
         if company_data:
-            await context.update_data(inn=inn, company_name=company_data['name'])
+            await context.update_data(inn=inn)
             await event.message.answer(
-                f"✅ **Организация найдена:**\n\n"
-                f"🏢 {company_data['name']}\n"
-                f"📍 {company_data['address']}\n\n"
-                f"Верно?",
-                attachments=[MainMenuKeyboards.create_confirm_keyboard()]
+                f"✅ **Организация найдена:** \n\n"
             )
-            await context.set_state(TicketStates.AWAITING_CONFIRMATION)
+
+            await event.message.answer(
+                f"📋 **Пожалуйста, представьтесь**\n\n(желательно полностью ввести ФИО):",
+                attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
+            )
+            await context.set_state(TicketStates.AWAITING_NAME)
+
         else:
             await event.message.answer(
                 f"❌ **Организация с ИНН {inn} не найдена.**\n\n"
@@ -93,12 +95,10 @@ def register_ticket_creation(dp: Dispatcher):
         await context.update_data(pc_name=pc_name)
         await context.set_state(TicketStates.AWAITING_PROBLEM)
         await event.message.answer(
-            "📝 **Шаг 5/6**\n\n**Опишите проблему:**\n\n"
-            "- Что случилось?\n"
-            "- Когда произошло?\n"
-            "- Есть ли ошибки?",
+            "❌ Пожалуйста, опишите проблему:",
             attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
         )
+
 
     @dp.message_created(TicketStates.AWAITING_PROBLEM)
     async def process_problem(event: MessageCreated, context: MemoryContext):
@@ -128,5 +128,5 @@ def register_ticket_creation(dp: Dispatcher):
         await context.set_state(TicketStates.CONFIRMING_TICKET)
         await event.message.answer(
             preview,
-            attachments=[MainMenuKeyboards.create_submit_ticket_keyboard()]
+            attachments=[MainMenuKeyboards.create_confirmation_keyboard()]
         )

@@ -45,11 +45,12 @@ def register_callback_router(dp: Dispatcher):
 
             await context.clear()
             await context.set_state(TicketStates.AWAITING_INN)
+            await callback.answer()
             await callback.message.edit(
                 text="🏢 **Создание обращения**\n\nШаг 1/6\n\nВведите **ИНН** вашей организации:",
                 attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
             )
-            await callback.answer()
+
             current_state = await context.get_state()
             print(f"📌 Текущее состояние: {current_state}")
             return
