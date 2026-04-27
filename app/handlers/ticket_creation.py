@@ -1,4 +1,3 @@
-# handlers/ticket_creation.py (исправленный)
 from maxapi import Dispatcher
 from maxapi.types import MessageCreated
 from maxapi.context import MemoryContext
