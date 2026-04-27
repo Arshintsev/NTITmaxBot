@@ -11,6 +11,7 @@ class TicketStates(StatesGroup):
     AWAITING_NAME = State()  # Шаг 3: Ожидание ввода имени
     AWAITING_PHONE = State()  # Шаг 4: Ожидание ввода телефона
     AWAITING_PC_NAME = State()  # Шаг 5: Ожидание ввода имени ПК
+    AWAITING_THEME = State()
     AWAITING_PROBLEM = State()  # Шаг 6: Ожидание описания проблемы
     CONFIRMING_TICKET = State()  # Шаг 7: Подтверждение создания заявки
 

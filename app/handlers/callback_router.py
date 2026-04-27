@@ -1,90 +1,128 @@
-# handlers/callback_router.py
-from maxapi import Dispatcher
+from maxapi import Dispatcher, F
 from maxapi.types import MessageCallback
 from maxapi.context import MemoryContext
+
 from app.keyboards import MainMenuKeyboards
 from app.text import MainMenuMessages
 from app.states import TicketStates
-from .info import handle_info_callbacks  # ✅ Импорт вашего экземпляра
-from app.pyrus_client import check_inn_in_db, save_ticket
+from .info import handle_info_callbacks
+from app.pyrus.client import save_ticket
+
+import asyncio
 
 
 def register_callback_router(dp: Dispatcher):
-    """Главный роутер для callback кнопок"""
-    print("🔵 Регистрация callback_router...")
-    @dp.message_callback()
-    async def router(callback: MessageCallback, context: MemoryContext):
-        print("🟢 CALLBACK ПОЛУЧЕН!")  # ← СЮДА (будет на каждое нажатие кнопки)
-        payload = callback.callback.payload
-        print(f"🔔 Payload: {payload}")  # ← СЮДА
 
-        # ====== ИНФОРМАЦИЯ ======
-        if payload == 'contacts_info':
-            await handle_info_callbacks.show_contacts(callback, context)
-            return
+    # ================= INFO =================
 
-        if payload == 'company_info':
-            await handle_info_callbacks.show_about(callback, context)
-            return
-
-        # ====== НАВИГАЦИЯ ======
-        if payload == 'back_to_main_menu':
-
-            await context.clear()
-            await context.set_state(None)
-            await callback.answer()
-            await callback.message.edit(
-                text=MainMenuMessages.WELCOME_MESSAGE,
-                attachments=[MainMenuKeyboards.create_main_menu_keyboard()]
-            )
-
-            return
-
-        # ====== СОЗДАНИЕ ЗАЯВКИ ======
-        if payload == 'process_data':
-
-            await context.clear()
-            await context.set_state(TicketStates.AWAITING_INN)
-            await callback.answer()
-            await callback.message.edit(
-                text="🏢 **Создание обращения**\n\nШаг 1/6\n\nВведите **ИНН** вашей организации:",
-                attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
-            )
-
-            current_state = await context.get_state()
-            print(f"📌 Текущее состояние: {current_state}")
-            return
-
-        if payload == 'confirm_continue':
-            await context.set_state(TicketStates.AWAITING_NAME)
-            await callback.message.edit(
-                text="👤 **Шаг 2/6**\n\nВведите ваше **Имя и Фамилию**:",
-                attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
-            )
-            await callback.answer()
-            return
-
-        if payload == 'submit_ticket':
-            data = await context.get_data()
-            ticket_data = {
-                'user_id': callback.from_user.user_id,
-                'inn': data.get('inn'),
-                'company_name': data.get('company_name'),
-                'name': data.get('name'),
-                'phone': data.get('phone'),
-                'pc_name': data.get('pc_name'),
-                'problem': data.get('problem'),
-            }
-            ticket_id = save_ticket(ticket_data)
-            await context.set_state(None)
-            await context.clear()
-            await callback.message.edit(
-                f"✅ **Заявка #{ticket_id} успешно создана!**",
-                attachments=[MainMenuKeyboards.create_main_menu_keyboard()]
-            )
-            await callback.answer()
-            return
-
-        print(f"⚠️ Неизвестный payload: {payload}")
+    @dp.message_callback(F.callback.payload == 'contacts_info')
+    async def contacts(callback: MessageCallback, context: MemoryContext):
         await callback.answer()
-    print("✅ callback_router зарегистрирован")  # ← И СЮДА
+        await handle_info_callbacks.show_contacts(callback, context)
+
+    @dp.message_callback(F.callback.payload == 'company_info')
+    async def about(callback: MessageCallback, context: MemoryContext):
+        await callback.answer()
+        await handle_info_callbacks.show_about(callback, context)
+
+    # ================= NAVIGATION =================
+
+    @dp.message_callback(F.callback.payload == 'back_to_main_menu')
+    async def back(callback: MessageCallback, context: MemoryContext):
+        await callback.answer()
+        await context.clear()
+
+        await callback.message.edit(
+            text=MainMenuMessages.WELCOME_MESSAGE,
+            attachments=[MainMenuKeyboards.create_main_menu_keyboard()]
+        )
+
+    # ================= START FLOW =================
+
+    @dp.message_callback(F.callback.payload == 'process_data')
+    async def start_ticket(callback: MessageCallback, context: MemoryContext):
+        await callback.answer()
+
+        await context.clear()
+
+        await callback.message.edit(
+            text=(
+                "⚠️ Перед началом заполните данные.\n\n"
+                "▶️ Нажмите «Информация прочитана» или вернитесь в меню."
+            ),
+            attachments=[MainMenuKeyboards.create_pre_inn_keyboard()]
+        )
+
+    @dp.message_callback(F.callback.payload == 'start_inn_input')
+    async def start_inn_input(callback: MessageCallback, context: MemoryContext):
+        await callback.answer()
+
+        await context.clear()
+        await context.set_state(TicketStates.AWAITING_INN)
+
+        await callback.message.edit(
+            text="🏢 Введите ИНН:",
+            attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
+        )
+
+    # ================= THEME =================
+
+    @dp.message_callback(F.callback.payload.startswith("theme:"))
+    async def select_theme(callback: MessageCallback, context: MemoryContext):
+        await callback.answer()
+
+        _, item_id, value = callback.callback.payload.split(":", 2)
+
+        await context.update_data(
+            theme_id=item_id,
+            theme_name=value
+        )
+
+        # 👉 теперь только после выбора темы идём дальше
+        await context.set_state(TicketStates.AWAITING_PROBLEM)
+
+        await callback.message.answer(
+            text=f"📌 Тема: {value}\n\n📝 Теперь опишите проблему:",
+            attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
+        )
+
+    # ================= CONFIRM =================
+
+    @dp.message_callback(F.callback.payload == 'confirm_action')
+    async def confirm(callback: MessageCallback, context: MemoryContext):
+        await callback.answer()
+
+        data = dict(await context.get_data())
+        data["user_id"] = callback.from_user.user_id
+
+        required = ["inn", "name", "phone", "pc_name", "theme_id", "problem"]
+
+        if not all(data.get(k) for k in required):
+            await context.clear()
+
+            await callback.message.edit(
+                "❌ Ошибка: не все данные заполнены",
+                attachments=[MainMenuKeyboards.create_main_menu_keyboard()]
+            )
+            return
+
+        ticket_id = await asyncio.to_thread(save_ticket, data)
+
+        await context.clear()
+
+        await callback.message.edit(
+            f"✅ Заявка #{ticket_id} создана",
+            attachments=[MainMenuKeyboards.create_main_menu_keyboard()]
+        )
+
+    # ================= CANCEL =================
+
+    @dp.message_callback(F.callback.payload == 'cancel_action')
+    async def cancel(callback: MessageCallback, context: MemoryContext):
+        await callback.answer()
+        await context.clear()
+
+        await callback.message.edit(
+            "❌ Отменено",
+            attachments=[MainMenuKeyboards.create_main_menu_keyboard()]
+        )

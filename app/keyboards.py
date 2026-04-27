@@ -96,3 +96,54 @@ class MainMenuKeyboards:
             )
         )
         return builder.as_markup()
+
+    @staticmethod
+    def create_pre_inn_keyboard():
+        """Экран перед вводом ИНН"""
+        builder = InlineKeyboardBuilder()
+
+        builder.row(
+            CallbackButton(
+                text='✅ Информация прочитана',
+                payload='start_inn_input'
+            )
+        )
+
+        builder.row(
+            CallbackButton(
+                text='🏠 Главное меню',
+                payload='back_to_main_menu'
+            )
+        )
+
+        return builder.as_markup()
+
+from maxapi.types.attachments.buttons import CallbackButton
+from maxapi.utils.inline_keyboard import InlineKeyboardBuilder
+
+
+class CreateTaskKeyboards:
+
+    @staticmethod
+    async def build_themes_task_keyboard(items):
+        builder = InlineKeyboardBuilder()
+
+        for item in items:
+            item_id = item.get("item_id")
+            value = item.get("values")[0]
+
+            builder.row(
+                CallbackButton(
+                    text=f"💻 {value}",
+                    payload=f"theme:{item_id}:{value}"
+                )
+            )
+
+        builder.row(
+            CallbackButton(
+                text="↩️ Вернуться в главное меню",
+                payload="back_to_main_menu"
+            )
+        )
+
+        return builder.as_markup()
