@@ -81,10 +81,6 @@ def map_task(data: Dict[str, Any]) -> PyrusTask:
     task = data.get("task", {})
     fields = task.get("fields", [])
 
-
-    import json
-    print("Полный ответ API:", json.dumps(data, indent=2, ensure_ascii=False))
-
     return PyrusTask(
         id=task.get("id"),
         title=task.get("text"),

@@ -9,5 +9,5 @@ def register_all_handlers(dp, pyrus_service):
     print("🔵 Регистрация ВСЕХ обработчиков...")
     register_commands(dp)
     register_ticket_creation(dp, pyrus_service)
-    register_callback_router(dp)
+    register_callback_router(dp, pyrus_service)
     print("✅ Все обработчики зарегистрированы")

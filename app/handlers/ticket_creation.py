@@ -3,10 +3,8 @@ from maxapi.types import MessageCreated
 from maxapi.context import MemoryContext
 from app.keyboards import MainMenuKeyboards, CreateTaskKeyboards
 from app.states import TicketStates
-from app.pyrus.client import get_themes_from_api
 from app.pyrus.service import PyrusService
 import re
-import asyncio
 
 # =========================
 # PHONE VALIDATION
@@ -52,30 +50,32 @@ def register_ticket_creation(dp: Dispatcher, pyrus_service: PyrusService):
             )
             return
 
-        # 🔥 НЕ блокируем event loop
-        company_name = await pyrus_service.get_contractor_id_by_inn(inn)
+        contractor = await pyrus_service.get_contractor_info(inn)
 
-        if company_name:
-            # ✅ СОХРАНЯЕМ В STATE
+        if contractor:
             await context.update_data(
                 inn=inn,
-                company_name=company_name['name'],
-                contractor_id=company_name['id']
+                company_name=contractor.get("name"),
+                contractor_id=contractor.get("id")
             )
 
             await event.message.answer(
                 f"✅ Найдена организация:\n"
-                f"📛 {company_name}\n"
+                f"📛 {contractor.get('name') or 'Название не заполнено в Pyrus'}\n"
                 f"🔢 ИНН: {inn}\n\n"
-                f"📋 Теперь введите ваше ФИО:"
+                f"📋 Теперь введите ваше ФИО:",
+                attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
             )
-        await context.update_data(inn=inn)
-        await context.set_state(TicketStates.AWAITING_NAME)
+        else:
+            await context.update_data(inn=inn)
+            await event.message.answer(
+                "⚠️ Компания с таким ИНН не найдена в Pyrus.\n"
+                "Проверьте ИНН и введите снова:",
+                attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
+            )
+            return
 
-        await event.message.answer(
-            "📋 Введите ваше ФИО:",
-            attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
-        )
+        await context.set_state(TicketStates.AWAITING_NAME)
 
     # =========================
     # STEP 2 — NAME
@@ -95,7 +95,30 @@ def register_ticket_creation(dp: Dispatcher, pyrus_service: PyrusService):
             )
             return
 
-        await context.update_data(name=name)
+        current_data = await context.get_data()
+        contractor_id = current_data.get("contractor_id")
+        client = await pyrus_service.get_client_info(name, contractor_id)
+
+        update_payload = {"name": name}
+        if client:
+            update_payload["client_task_id"] = client.get("id")
+            if client.get("fio"):
+                update_payload["name"] = client.get("fio")
+
+            await event.message.answer(
+                f"✅ Клиент найден в форме «Клиенты»:\n"
+                f"👤 {client.get('fio')}\n"
+                f"🆔 ID: {client.get('id')}",
+                attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
+            )
+        else:
+            await event.message.answer(
+                "⚠️ Клиент по ФИО не найден в форме «Клиенты».\n"
+                "Продолжаем создание заявки с введённым ФИО.",
+                attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
+            )
+
+        await context.update_data(**update_payload)
         await context.set_state(TicketStates.AWAITING_PHONE)
 
         await event.message.answer(
@@ -161,7 +184,7 @@ def register_ticket_creation(dp: Dispatcher, pyrus_service: PyrusService):
 
         await context.update_data(pc_name=pc_name)
 
-        items = await get_themes_from_api()
+        items = await pyrus_service.get_themes()
         keyboard = await CreateTaskKeyboards.build_themes_task_keyboard(items)
 
         # ❗ ТОЛЬКО показываем темы, НЕ меняем state на PROBLEM

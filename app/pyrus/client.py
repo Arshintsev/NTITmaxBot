@@ -4,6 +4,7 @@ from typing import Any, Dict
 
 import httpx
 
+from app.config import settings
 from .exceptions import PyrusNetworkError, PyrusAPIError, PyrusAuthError
 from .error_mapper import  map_http_error
 from .mapper import map_task
@@ -157,18 +158,35 @@ class PyrusClient:
 
     async def create_ticket(self, data: Dict[str, Any]) -> int:
         url = f"{self.base_url}/tasks"
+        fields: list[dict[str, Any]] = [
+            {"id": 1, "value": data.get("theme_name") or "Без темы"},
+            {"id": 2, "value": data.get("problem") or "Описание не указано"},
+            {"id": 44, "value": data.get("pc_name") or "Не указан"},
+            {"id": 118, "value": str(data.get("user_id", ""))},
+            {"id": 6, "value": "".join(ch for ch in str(data.get("phone", "")) if ch.isdigit())},
+            {"id": 36, "value": {"item_id": settings.PYRUS_DEFAULT_PRIORITY_ITEM_ID}},
+        ]
 
-        payload = {
-            "subject": f"Заявка от {data.get('name')}",
-            "fields": {
-                "inn": data.get("inn"),
-                "name": data.get("name"),
-                "phone": data.get("phone"),
-                "pc_name": data.get("pc_name"),
-                "problem": data.get("problem"),
-                "theme_id": data.get("theme_id"),
-            },
+        contractor_id = data.get("contractor_id")
+        if contractor_id:
+            fields.append({"id": 40, "value": {"task_id": int(contractor_id)}})
+
+        client_task_id = data.get("client_task_id")
+        if client_task_id:
+            fields.append({"id": 39, "value": {"task_id": int(client_task_id)}})
+
+        # Не отправляем catalog-поле "Тип заявки" из кнопок бота,
+        # потому что значения theme_id в боте (1..N) не равны item_id каталога Pyrus.
+        # Тема уже сохраняется в текстовом поле.
+
+        payload: dict[str, Any] = {
+            "text": f"Заявка от {data.get('name') or 'пользователя'}",
+            "form_id": settings.PYRUS_TASK_FORM_ID,
+            "fields": fields,
         }
+
+        if settings.PYRUS_DEFAULT_PARTICIPANT_ID and settings.PYRUS_DEFAULT_PARTICIPANT_ID.isdigit():
+            payload["participants"] = [int(settings.PYRUS_DEFAULT_PARTICIPANT_ID)]
 
         result = await self._request("POST", url, json=payload)
 
@@ -183,73 +201,3 @@ class PyrusClient:
 
     async def close(self):
         await self._client.aclose()
-
-# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (ЗАГЛУШКИ) ==========
-def get_user_active_tasks(user_id: int) -> list:
-    """Получить активные задачи пользователя (заглушка)"""
-    return [
-        {'id': 1, 'title': 'Проблема с оплатой', 'status': 'active'},
-        {'id': 2, 'title': 'Техническая поддержка', 'status': 'active'},
-        {'id': 3, 'title': 'Вопрос по документации', 'status': 'active'},
-    ]
-
-
-def get_user_closed_tasks(user_id: int) -> list:
-    """Получить закрытые задачи пользователя (заглушка)"""
-    return [
-        {'id': 100, 'title': 'Создание аккаунта', 'status': 'closed'},
-        {'id': 101, 'title': 'Настройка бота', 'status': 'closed'},
-    ]
-
-def save_ticket(data: dict) -> int:
-    """Сохранить заявку"""
-    import random
-
-    ticket_id = random.randint(1000, 9999)
-
-    print(
-        f"""
-        ✅ Заявка #{ticket_id}
-        user_id: {data.get('user_id')}
-        inn: {data.get('inn')}
-        name: {data.get('name')}
-        phone: {data.get('phone')}
-        pc_name: {data.get('pc_name')}
-        problem: {data.get('problem')}
-        """
-    )
-
-    return ticket_id
-
-
-def save_comment(task_id: int, user_id: int, text: str) -> None:
-    """Сохранить комментарий к задаче (заглушка)"""
-    print(f"💬 Комментарий к задаче #{task_id} от {user_id}: {text}")
-
-
-def cancel_task(task_id: int, user_id: int) -> None:
-    """Отменить задачу (заглушка)"""
-    print(f"❌ Задача #{task_id} отменена пользователем {user_id}")
-
-def check_inn_in_db(inn_number: str) -> bool:
-    """Проверка существования ИНН в базе CRM (тестовый стенд)"""
-    valid_inns = {"1111111111", "7701010101", "7712345678"}
-    return inn_number in valid_inns
-
-import asyncio
-
-
-async def get_themes_from_api():
-    """
-    Заглушка CRM/API.
-    Потом тут будет реальный запрос в Pyrus / CRM / HTTP.
-    """
-
-    await asyncio.sleep(0.2)  # имитация сети
-
-    return [
-        {"item_id": "1", "values": ["Проблема с интернетом"]},
-        {"item_id": "2", "values": ["Не работает ПК"]},
-        {"item_id": "3", "values": ["Ошибка в программе"]},
-        {"item_id": "4", "values": ["Доступы / аккаунты"]},
-    ]

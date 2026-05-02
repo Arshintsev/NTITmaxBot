@@ -8,7 +8,8 @@ load_dotenv()
 from maxapi import Bot, Dispatcher
 from maxapi.context import MemoryContext
 from app.handlers import register_all_handlers
-from app.pyrus.instance import pyrus,client
+from app.pyrus.instance import pyrus
+from app.data.instance import db
 
 logging.basicConfig(level=logging.INFO)
 
@@ -19,20 +20,15 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryContext)
 
-register_all_handlers(dp,pyrus)
-
-
-async def debug_pyrus_startup():
-    task_id = 351833568
-    await client.debug_print_task(task_id)
+register_all_handlers(dp, pyrus)
 
 
 async def main():
-    try:
-        await debug_pyrus_startup()
-    except Exception as e:
-        print(f"❌ Pyrus test failed: {e}")
-
+    # Явно инициализируем SQLite до старта polling.
+    _ = db
+    deleted_rows = db.delete_old_closed_tickets(days=60)
+    if deleted_rows:
+        logging.info("Удалено закрытых заявок старше 60 дней: %s", deleted_rows)
     await dp.start_polling(bot)
 
 
