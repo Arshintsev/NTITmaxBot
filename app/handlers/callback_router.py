@@ -25,6 +25,11 @@ def register_callback_router(dp: Dispatcher):
         await callback.answer()
         await handle_info_callbacks.show_about(callback, context)
 
+    @dp.message_callback(F.callback.payload == 'closed_tasks')
+    async def c_tasks(callback: MessageCallback, context: MemoryContext):
+        await callback.answer()
+        await handle_info_callbacks.closed_tasks(callback, context)
+
     # ================= NAVIGATION =================
 
     @dp.message_callback(F.callback.payload == 'back_to_main_menu')
@@ -116,6 +121,18 @@ def register_callback_router(dp: Dispatcher):
         )
 
     # ================= CANCEL =================
+
+    @dp.message_callback(F.callback.payload == 'cancel_action')
+    async def cancel(callback: MessageCallback, context: MemoryContext):
+        await callback.answer()
+        await context.clear()
+
+        await callback.message.edit(
+            "❌ Отменено",
+            attachments=[MainMenuKeyboards.create_main_menu_keyboard()]
+        )
+
+    # ================= Download ticket  =================
 
     @dp.message_callback(F.callback.payload == 'cancel_action')
     async def cancel(callback: MessageCallback, context: MemoryContext):

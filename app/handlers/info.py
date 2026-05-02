@@ -50,37 +50,20 @@ class InfoHandlers:
             attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
         )
 
+    @staticmethod
+    async def closed_tasks(callback: MessageCallback, context: MemoryContext):
+        """
+        Показать закрыте заявки за 24 часа.
 
-    # @staticmethod
-    # async def show_closed_tasks(callback: MessageCallback, context: MemoryContext):
-    #     """
-    #     Показать список закрытых задач пользователя.
-    #
-    #     Args:
-    #         callback: Объект callback запроса
-    #         context: Контекст состояния пользователя
-    #     """
-    #     user_id = callback.from_user.user_id
-    #     await context.set_state(TicketStates.VIEWING_CLOSED_TASKS)
-    #
-    #     # Временная заглушка (потом заменить на реальный запрос к CRM)
-    #     closed_tasks = []  # get_user_closed_tasks(user_id)
-    #
-    #     if closed_tasks:
-    #         tasks_list = []
-    #         for task in closed_tasks:
-    #             tasks_list.append(f"✅ #{task['id']}: {task['title']}")
-    #
-    #         tasks_text = "\n".join(tasks_list)
-    #         message = f"📁 **Закрытые задачи**\n\n{tasks_text}"
-    #     else:
-    #         message = "📁 **Закрытые задачи**\n\nУ вас пока нет закрытых задач."
-    #
-    #     await callback.message.edit(
-    #         text=message,
-    #         attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
-    #     )
-    #     await callback.answer()
+        Args:
+            callback: Объект callback запроса
+            context: Контекст состояния пользователя
+        """
+        await callback.answer()
+        await callback.message.edit(
+            text="Задача 21 закрыта",
+            attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
+        )
 
 
 #  Создаем экземпляр для удобного импорта в callback_router

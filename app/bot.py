@@ -23,7 +23,7 @@ register_all_handlers(dp)
 
 
 async def debug_pyrus_startup():
-    task_id = 351570387
+    task_id = 351833568
     await pyrus.debug_print_task(task_id)
 
 
