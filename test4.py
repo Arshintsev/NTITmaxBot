@@ -10,7 +10,7 @@ pyrus_client = client.PyrusAPI(
 )
 
 # ID формы "Пользователи"
-USERS_FORM_ID = 2306222
+USERS_FORM_ID = 2303165
 
 # Получаем все формы
 forms_response = pyrus_client.get_forms()
