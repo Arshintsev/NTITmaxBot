@@ -8,7 +8,7 @@ load_dotenv()
 from maxapi import Bot, Dispatcher
 from maxapi.context import MemoryContext
 from app.handlers import register_all_handlers
-from app.pyrus.instance import pyrus
+from app.pyrus.instance import pyrus,client
 
 logging.basicConfig(level=logging.INFO)
 
@@ -19,12 +19,12 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryContext)
 
-register_all_handlers(dp)
+register_all_handlers(dp,pyrus)
 
 
 async def debug_pyrus_startup():
     task_id = 351833568
-    await pyrus.debug_print_task(task_id)
+    await client.debug_print_task(task_id)
 
 
 async def main():

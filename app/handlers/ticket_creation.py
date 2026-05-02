@@ -3,8 +3,8 @@ from maxapi.types import MessageCreated
 from maxapi.context import MemoryContext
 from app.keyboards import MainMenuKeyboards, CreateTaskKeyboards
 from app.states import TicketStates
-from app.pyrus.client import check_inn_in_db, get_themes_from_api
-
+from app.pyrus.client import get_themes_from_api
+from app.pyrus.service import PyrusService
 import re
 import asyncio
 
@@ -31,7 +31,7 @@ def normalize_phone(phone: str) -> str:
 # MAIN ROUTER
 # =========================
 
-def register_ticket_creation(dp: Dispatcher):
+def register_ticket_creation(dp: Dispatcher, pyrus_service: PyrusService):
     """FSM обработчики создания заявки"""
 
     # =========================
@@ -53,15 +53,22 @@ def register_ticket_creation(dp: Dispatcher):
             return
 
         # 🔥 НЕ блокируем event loop
-        company_data = await asyncio.to_thread(check_inn_in_db, inn)
+        company_name = await pyrus_service.get_contractor_id_by_inn(inn)
 
-        if not company_data:
-            await event.message.answer(
-                f"❌ Организация с ИНН {inn} не найдена.\n\nПопробуйте снова:",
-                attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()]
+        if company_name:
+            # ✅ СОХРАНЯЕМ В STATE
+            await context.update_data(
+                inn=inn,
+                company_name=company_name['name'],
+                contractor_id=company_name['id']
             )
-            return
 
+            await event.message.answer(
+                f"✅ Найдена организация:\n"
+                f"📛 {company_name}\n"
+                f"🔢 ИНН: {inn}\n\n"
+                f"📋 Теперь введите ваше ФИО:"
+            )
         await context.update_data(inn=inn)
         await context.set_state(TicketStates.AWAITING_NAME)
 
