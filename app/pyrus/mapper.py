@@ -98,4 +98,5 @@ def map_task(data: Dict[str, Any]) -> PyrusTask:
 
         # комментарии
         comments=_map_comments(task.get("comments", [])),
+        raw_data=data,
     )

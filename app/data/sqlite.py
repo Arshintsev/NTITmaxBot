@@ -18,6 +18,14 @@ CLOSED_STATUSES = (
     "Выполнена",
 )
 
+# Закрытая / открытая заявка в боте (поле «Статус» в Pyrus).
+TICKET_CLOSED_STATUS = "Решена"
+TICKET_OPEN_STATUS = "Открыта"
+
+
+def is_ticket_closed(status: Optional[str]) -> bool:
+    return (status or "").strip() == TICKET_CLOSED_STATUS
+
 
 class BotDB:
     """SQLite-хранилище бота: пользователи, задачи, оценки."""
@@ -103,6 +111,8 @@ class BotDB:
                 "CREATE INDEX IF NOT EXISTS idx_ticket_ratings_max_user_id ON ticket_ratings(max_user_id)"
             )
         self._ensure_ticket_columns()
+        self._ensure_user_link_columns()
+        self._ensure_ticket_closure_column()
 
     def _ensure_ticket_columns(self) -> None:
         """
@@ -128,6 +138,54 @@ class BotDB:
                     continue
                 conn.execute(f"ALTER TABLE tickets ADD COLUMN {col_name} {col_type}")
 
+    def _ensure_user_link_columns(self) -> None:
+        required_columns: dict[str, str] = {
+            "contact_name": "TEXT",
+            "phone": "TEXT",
+            "pc_name": "TEXT",
+        }
+        with self._get_conn() as conn:
+            existing = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(user_links)").fetchall()
+            }
+            for col_name, col_type in required_columns.items():
+                if col_name in existing:
+                    continue
+                conn.execute(f"ALTER TABLE user_links ADD COLUMN {col_name} {col_type}")
+
+    def get_user_profile(self, max_user_id: int) -> Optional[dict[str, Any]]:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    max_user_id,
+                    max_username,
+                    max_full_name,
+                    contact_name,
+                    phone,
+                    pc_name,
+                    pyrus_user_id,
+                    pyrus_contractor_task_id,
+                    inn,
+                    company_name
+                FROM user_links
+                WHERE max_user_id = ?
+                """,
+                (max_user_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    @staticmethod
+    def profile_is_complete(profile: Optional[dict[str, Any]]) -> bool:
+        if not profile:
+            return False
+        return bool(
+            profile.get("contact_name")
+            and profile.get("phone")
+            and profile.get("pc_name")
+        )
+
     def upsert_user_link(
         self,
         *,
@@ -138,6 +196,9 @@ class BotDB:
         company_name: Optional[str] = None,
         max_username: Optional[str] = None,
         max_full_name: Optional[str] = None,
+        contact_name: Optional[str] = None,
+        phone: Optional[str] = None,
+        pc_name: Optional[str] = None,
     ) -> None:
         with self._get_conn() as conn:
             conn.execute(
@@ -149,16 +210,24 @@ class BotDB:
                     pyrus_user_id,
                     pyrus_contractor_task_id,
                     inn,
-                    company_name
+                    company_name,
+                    contact_name,
+                    phone,
+                    pc_name
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(max_user_id) DO UPDATE SET
-                    max_username=excluded.max_username,
-                    max_full_name=excluded.max_full_name,
+                    max_username=COALESCE(excluded.max_username, user_links.max_username),
+                    max_full_name=COALESCE(excluded.max_full_name, user_links.max_full_name),
                     pyrus_user_id=COALESCE(excluded.pyrus_user_id, user_links.pyrus_user_id),
-                    pyrus_contractor_task_id=COALESCE(excluded.pyrus_contractor_task_id, user_links.pyrus_contractor_task_id),
+                    pyrus_contractor_task_id=COALESCE(
+                        excluded.pyrus_contractor_task_id, user_links.pyrus_contractor_task_id
+                    ),
                     inn=COALESCE(excluded.inn, user_links.inn),
                     company_name=COALESCE(excluded.company_name, user_links.company_name),
+                    contact_name=COALESCE(excluded.contact_name, user_links.contact_name),
+                    phone=COALESCE(excluded.phone, user_links.phone),
+                    pc_name=COALESCE(excluded.pc_name, user_links.pc_name),
                     updated_at=CURRENT_TIMESTAMP
                 """,
                 (
@@ -169,6 +238,9 @@ class BotDB:
                     pyrus_contractor_task_id,
                     inn,
                     company_name,
+                    contact_name,
+                    phone,
+                    pc_name,
                 ),
             )
 
@@ -190,8 +262,9 @@ class BotDB:
         client_task_id: Optional[int] = None,
         payload_json: Optional[str] = None,
     ) -> None:
+        closed = is_ticket_closed(status)
+        resolved_at = "CURRENT_TIMESTAMP" if closed else "NULL"
         with self._get_conn() as conn:
-            resolved_at = "CURRENT_TIMESTAMP" if status not in UNRESOLVED_STATUSES else "NULL"
             conn.execute(
                 f"""
                 INSERT INTO tickets (
@@ -211,7 +284,7 @@ class BotDB:
                     payload_json,
                     resolved_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {resolved_at})
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {resolved_at})
                 ON CONFLICT(pyrus_task_id) DO UPDATE SET
                     max_user_id=excluded.max_user_id,
                     inn=excluded.inn,
@@ -247,11 +320,10 @@ class BotDB:
                 ),
             )
 
-    def get_unresolved_tickets_by_user(self, max_user_id: int) -> list[dict[str, Any]]:
-        placeholders = ",".join("?" for _ in UNRESOLVED_STATUSES)
+    def get_open_tickets_by_user(self, max_user_id: int) -> list[dict[str, Any]]:
         with self._get_conn() as conn:
             rows = conn.execute(
-                f"""
+                """
                 SELECT
                     id,
                     pyrus_task_id,
@@ -263,12 +335,221 @@ class BotDB:
                     updated_at
                 FROM tickets
                 WHERE max_user_id = ?
-                  AND status IN ({placeholders})
+                  AND COALESCE(status, '') != ?
                 ORDER BY updated_at DESC
                 """,
-                (max_user_id, *UNRESOLVED_STATUSES),
+                (max_user_id, TICKET_CLOSED_STATUS),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def get_unresolved_tickets_by_user(self, max_user_id: int) -> list[dict[str, Any]]:
+        """Открытые заявки (статус не «Решена»)."""
+        return self.get_open_tickets_by_user(max_user_id)
+
+    def get_recently_closed_tickets_by_user(
+        self, max_user_id: int, *, hours: int = 1
+    ) -> list[dict[str, Any]]:
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    id,
+                    pyrus_task_id,
+                    inn,
+                    theme_name,
+                    status,
+                    subject,
+                    created_at,
+                    updated_at,
+                    resolved_at
+                FROM tickets
+                WHERE max_user_id = ?
+                  AND status = ?
+                  AND datetime(COALESCE(resolved_at, updated_at))
+                      >= datetime('now', ?)
+                ORDER BY COALESCE(resolved_at, updated_at) DESC
+                """,
+                (max_user_id, TICKET_CLOSED_STATUS, f"-{hours} hours"),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def is_ticket_open_for_user(self, pyrus_task_id: int, max_user_id: int) -> bool:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT status FROM tickets
+                WHERE pyrus_task_id = ? AND max_user_id = ?
+                """,
+                (pyrus_task_id, max_user_id),
+            ).fetchone()
+        return bool(row and not is_ticket_closed(row["status"]))
+
+    def list_pyrus_task_ids_by_user(self, max_user_id: int, limit: int = 100) -> list[int]:
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT pyrus_task_id FROM tickets
+                WHERE max_user_id = ?
+                  AND COALESCE(pyrus_sync_blocked, 0) = 0
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (max_user_id, limit),
+            ).fetchall()
+        return [int(row["pyrus_task_id"]) for row in rows]
+
+    def list_tickets_for_status_sync(self, limit: int = 80) -> list[dict[str, Any]]:
+        """
+        Все открытые и все «Решена» — чтобы подхватить переоткрытие в Pyrus.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT pyrus_task_id, max_user_id
+                FROM tickets
+                WHERE COALESCE(pyrus_sync_blocked, 0) = 0
+                  AND (
+                    COALESCE(status, '') != ?
+                    OR status = ?
+                  )
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (TICKET_CLOSED_STATUS, TICKET_CLOSED_STATUS, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _ensure_ticket_closure_column(self) -> None:
+        with self._get_conn() as conn:
+            existing = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(tickets)").fetchall()
+            }
+            if "closure_notified_at" not in existing:
+                conn.execute(
+                    "ALTER TABLE tickets ADD COLUMN closure_notified_at TEXT"
+                )
+            if "pyrus_sync_blocked" not in existing:
+                conn.execute(
+                    "ALTER TABLE tickets ADD COLUMN pyrus_sync_blocked INTEGER DEFAULT 0"
+                )
+
+    def list_tickets_pending_closure_notification(self, limit: int = 40) -> list[dict[str, Any]]:
+        """Заявки без уведомления о закрытии и без оценки."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT t.pyrus_task_id, t.max_user_id, t.theme_name, t.status
+                FROM tickets t
+                WHERE t.closure_notified_at IS NULL
+                  AND COALESCE(t.pyrus_sync_blocked, 0) = 0
+                  AND NOT EXISTS (
+                      SELECT 1 FROM ticket_ratings r
+                      WHERE r.pyrus_task_id = t.pyrus_task_id
+                  )
+                ORDER BY t.updated_at ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_pyrus_sync_blocked(self, pyrus_task_id: int) -> None:
+        """Нет доступа к задаче в API — больше не опрашивать."""
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                UPDATE tickets
+                SET pyrus_sync_blocked = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE pyrus_task_id = ?
+                """,
+                (pyrus_task_id,),
+            )
+
+    def mark_closure_notified(self, pyrus_task_id: int) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                UPDATE tickets
+                SET closure_notified_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE pyrus_task_id = ?
+                """,
+                (pyrus_task_id,),
+            )
+
+    def is_closure_notified(self, pyrus_task_id: int) -> bool:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT closure_notified_at FROM tickets WHERE pyrus_task_id = ?",
+                (pyrus_task_id,),
+            ).fetchone()
+        return bool(row and row["closure_notified_at"])
+
+    def list_pyrus_task_ids_pending_rating(self, max_user_id: int, limit: int = 25) -> list[int]:
+        """Заявки пользователя без записи в ticket_ratings (FIFO по дате создания)."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT t.pyrus_task_id
+                FROM tickets t
+                WHERE t.max_user_id = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM ticket_ratings r
+                      WHERE r.pyrus_task_id = t.pyrus_task_id
+                  )
+                ORDER BY t.created_at ASC
+                LIMIT ?
+                """,
+                (max_user_id, limit),
+            ).fetchall()
+        return [int(row["pyrus_task_id"]) for row in rows]
+
+    def has_ticket_rating(self, pyrus_task_id: int) -> bool:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM ticket_ratings WHERE pyrus_task_id = ? LIMIT 1",
+                (pyrus_task_id,),
+            ).fetchone()
+        return row is not None
+
+    def get_ticket_by_pyrus_for_user(
+        self, pyrus_task_id: int, max_user_id: int
+    ) -> Optional[dict[str, Any]]:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT id, pyrus_task_id, max_user_id, theme_name, status
+                FROM tickets
+                WHERE pyrus_task_id = ? AND max_user_id = ?
+                """,
+                (pyrus_task_id, max_user_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def update_ticket_status_from_pyrus(self, pyrus_task_id: int, status: str) -> None:
+        """Обновляет статус; «Решена» → resolved_at; открытие → сброс resolved_at и уведомления."""
+        status = (status or "").strip()
+        closed = is_ticket_closed(status)
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                UPDATE tickets
+                SET status = ?,
+                    updated_at = CURRENT_TIMESTAMP,
+                    resolved_at = CASE
+                        WHEN ? = 1 THEN COALESCE(resolved_at, CURRENT_TIMESTAMP)
+                        ELSE NULL
+                    END,
+                    closure_notified_at = CASE
+                        WHEN ? = 0 THEN NULL
+                        ELSE closure_notified_at
+                    END
+                WHERE pyrus_task_id = ?
+                """,
+                (status, 1 if closed else 0, 1 if closed else 0, pyrus_task_id),
+            )
 
     def save_ticket_rating(
         self,
@@ -312,16 +593,15 @@ class BotDB:
         Удаляет из БД закрытые заявки старше указанного количества дней.
         Возвращает количество удаленных строк.
         """
-        placeholders = ",".join("?" for _ in CLOSED_STATUSES)
         with self._get_conn() as conn:
             cursor = conn.execute(
-                f"""
+                """
                 DELETE FROM tickets
-                WHERE status IN ({placeholders})
+                WHERE status = ?
                   AND datetime(COALESCE(resolved_at, updated_at, created_at))
                       <= datetime('now', ?)
                 """,
-                (*CLOSED_STATUSES, f"-{days} days"),
+                (TICKET_CLOSED_STATUS, f"-{days} days"),
             )
             return cursor.rowcount
 

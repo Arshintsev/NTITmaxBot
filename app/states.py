@@ -13,11 +13,14 @@ class TicketStates(StatesGroup):
     AWAITING_PC_NAME = State()  # Шаг 5: Ожидание ввода имени ПК
     AWAITING_THEME = State()
     AWAITING_PROBLEM = State()  # Шаг 6: Ожидание описания проблемы
-    CONFIRMING_TICKET = State()  # Шаг 7: Подтверждение создания заявки
+    AWAITING_ATTACH_DECISION = State()  # Шаг 7: Нужны ли вложения
+    AWAITING_ATTACHMENTS = State()  # Шаг 8: Ожидание вложений
+    CONFIRMING_TICKET = State()  # Шаг 9: Подтверждение создания заявки
 
     # === Комментарии ===
     SELECTING_TASK_FOR_COMMENT = State()  # Выбор задачи для комментария
     AWAITING_COMMENT_TEXT = State()  # Ожидание текста комментария
+    AWAITING_COMMENT_ATTACHMENTS = State()  # Вложения к комментарию
 
     # === Отмена заявки ===
     SELECTING_TASK_FOR_CANCEL = State()  # Выбор задачи для отмены
