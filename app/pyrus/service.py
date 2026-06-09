@@ -60,7 +60,16 @@ class PyrusService:
         return status
 
     async def create_task(self, data: dict):
-        return await self.client.create_ticket(data)
+        task_id = await self.client.create_ticket(data)
+
+        await self.submit_task_comment(
+            task_id=task_id,
+            text=data.get("problem") or data.get("theme_name") or "Сообщение из MAX",
+            attachments=data.get("attachments"),
+            max_user_id=int(data.get("user_id", 0)),
+        )
+
+        return task_id
 
     @staticmethod
     def _rating_from_choice_label(label: str) -> int | None:
@@ -173,6 +182,8 @@ class PyrusService:
             )
             return False
 
+    MAX_MESSENGER_CHANNEL = {"type": "max_messenger"}
+
     async def submit_task_comment(
         self,
         task_id: int,
@@ -181,16 +192,14 @@ class PyrusService:
         attachments: list[dict[str, Any]] | None = None,
         max_user_id: int,
     ) -> bool:
-        """Комментарий к открытой заявке (текст и/или файлы в ленту Pyrus)."""
+        """Комментарий из MAX в Pyrus через канал max_messenger."""
         prepared: list[dict[str, Any]] = []
         if attachments:
             prepared = await self.client._prepare_attachments_for_pyrus(attachments)
 
         body = (text or "").strip()
         if not body and prepared:
-            body = "Вложение от пользователя MAX"
-        if body:
-            body = f"💬 Комментарий MAX (ID {max_user_id}):\n{body}"
+            body = "Вложение"
 
         pyrus_attachments = [
             {"guid": item["guid"], "name": item.get("name") or "Вложение"}
@@ -206,13 +215,15 @@ class PyrusService:
                 task_id,
                 text=body or None,
                 attachments=pyrus_attachments or None,
+                channel=self.MAX_MESSENGER_CHANNEL,
                 skip_auto_reopen=False,
             )
             return True
         except Exception as e:
             logger.warning(
-                "Не удалось отправить комментарий в Pyrus (задача %s): %s",
+                "Не удалось отправить комментарий в Pyrus (задача %s, MAX %s): %s",
                 task_id,
+                max_user_id,
                 e,
             )
             return False

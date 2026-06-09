@@ -10,4 +10,4 @@ client = PyrusClient(
 )
 
 # Создаем сервис (обертку с бизнес-логикой)
-pyrus = PyrusService(client)  # ← теперь pyrus — это сервис
+pyrus = PyrusService(client)

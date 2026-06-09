@@ -26,6 +26,29 @@ def profile_context_payload(profile: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def company_context_payload(profile: dict[str, Any]) -> dict[str, Any]:
+    """ИНН и контрагент из сохранённого профиля."""
+    payload: dict[str, Any] = {}
+    if profile.get("inn"):
+        payload["inn"] = profile["inn"]
+    if profile.get("company_name"):
+        payload["company_name"] = profile["company_name"]
+    if profile.get("pyrus_contractor_task_id"):
+        payload["contractor_id"] = profile["pyrus_contractor_task_id"]
+    return payload
+
+
+def ticket_start_context_payload(profile: dict[str, Any]) -> dict[str, Any]:
+    return {**profile_context_payload(profile), **company_context_payload(profile)}
+
+
+def has_saved_company(profile: Optional[dict[str, Any]]) -> bool:
+    """Пользователь уже вводил валидный ИНН — контрагент найден в Pyrus."""
+    if not profile:
+        return False
+    return bool(profile.get("inn") and profile.get("pyrus_contractor_task_id"))
+
+
 def save_profile(
     *,
     max_user_id: int,

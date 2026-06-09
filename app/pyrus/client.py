@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict
 import re
@@ -171,6 +172,8 @@ class PyrusClient:
         self.timeout = timeout
 
         self._token: str | None = None
+        self._token_expires_at: float = 0.0
+        self._auth_lock = asyncio.Lock()
 
         self._client = httpx.AsyncClient(
             timeout=timeout,
@@ -181,36 +184,58 @@ class PyrusClient:
     # =========================
 
     async def _auth(self) -> str:
-        logger.info("[PYRUS] auth request")
+        async with self._auth_lock:
+            if self._token and time.monotonic() < self._token_expires_at:
+                return self._token
 
-        response = await self._client.post(
-            f"{ACCOUNTS_API}/auth",
-            json={
-                "login": self.login,
-                "security_key": self.security_key,
-                "person_id": self.person_id,
-            },
-        )
+            logger.info("[PYRUS] auth request")
 
-        if response.status_code >= 400:
-            logger.error(f"[PYRUS] auth failed: {response.text}")
-            raise PyrusAuthError("Auth failed")
+            response = await self._client.post(
+                f"{ACCOUNTS_API}/auth",
+                json={
+                    "login": self.login,
+                    "security_key": self.security_key,
+                    "person_id": self.person_id,
+                },
+            )
 
-        token = response.json().get("access_token")
+            if response.status_code >= 400:
+                logger.error(f"[PYRUS] auth failed: {response.text}")
+                raise PyrusAuthError("Auth failed")
 
-        if not token:
-            raise PyrusAuthError("No access token received")
+            data = response.json()
+            token = data.get("access_token")
 
-        self._token = token
-        return token
+            if not token:
+                raise PyrusAuthError("No access token received")
 
-    async def _get_headers(self) -> dict:
-        if not self._token:
+            expires_in = int(data.get("expires_in") or 1800)
+            refresh_margin = min(300, max(60, expires_in // 6))
+            self._token = token
+            self._token_expires_at = time.monotonic() + max(
+                60, expires_in - refresh_margin
+            )
+            logger.info(
+                "[PYRUS] token получен, обновление через ~%s с",
+                int(self._token_expires_at - time.monotonic()),
+            )
+            return token
+
+    async def refresh_token_if_needed(self) -> None:
+        """Проактивное обновление до истечения срока жизни токена."""
+        if not self._token or time.monotonic() >= self._token_expires_at:
             await self._auth()
 
+    async def _get_headers(self) -> dict:
+        await self.refresh_token_if_needed()
         return {
             "Authorization": f"Bearer {self._token}",
         }
+
+    async def _reauth(self) -> None:
+        self._token = None
+        self._token_expires_at = 0.0
+        await self._auth()
 
     # =========================
     # REQUEST WRAPPER (RETRY + LOGGING)
@@ -234,12 +259,12 @@ class PyrusClient:
                     **kwargs,
                 )
 
-                # если токен протух → переавторизация
                 if response.status_code == 401:
-                    logger.warning("[PYRUS] token expired, reauth")
-                    self._token = None
-                    await self._auth()
-                    continue
+                    logger.warning("[PYRUS] HTTP 401, повторная авторизация")
+                    await self._reauth()
+                    if attempt < retries - 1:
+                        continue
+                    raise PyrusAuthError("Pyrus token expired")
 
                 if response.status_code >= 400:
                     raise map_http_error(response.status_code, response.text)
@@ -266,8 +291,7 @@ class PyrusClient:
             headers.update(await self._get_headers())
             response = await self._client.request(method, url, headers=headers, **kwargs)
             if response.status_code == 401:
-                self._token = None
-                await self._auth()
+                await self._reauth()
                 headers.update(await self._get_headers())
                 response = await self._client.request(method, url, headers=headers, **kwargs)
             if response.status_code >= 400:
@@ -337,6 +361,8 @@ class PyrusClient:
             {"id": 118, "value": str(data.get("user_id", ""))},
             {"id": 6, "value": "".join(ch for ch in str(data.get("phone", "")) if ch.isdigit())},
             {"id": 36, "value": {"item_id": settings.PYRUS_DEFAULT_PRIORITY_ITEM_ID}},
+            {"id": 32, "value": str(data.get("user_id"))},
+
         ]
 
         contractor_id = data.get("contractor_id")
@@ -372,6 +398,10 @@ class PyrusClient:
             ),
             "form_id": settings.PYRUS_TASK_FORM_ID,
             "fields": fields,
+            "channel": {
+                "type": "max_messenger"
+            }
+
         }
 
         if settings.PYRUS_DEFAULT_PARTICIPANT_ID and settings.PYRUS_DEFAULT_PARTICIPANT_ID.isdigit():
@@ -397,8 +427,7 @@ class PyrusClient:
             headers.update(await self._get_headers())
             response = await self._client.request(method, url, headers=headers, **kwargs)
             if response.status_code == 401:
-                self._token = None
-                await self._auth()
+                await self._reauth()
                 headers.update(await self._get_headers())
                 response = await self._client.request(method, url, headers=headers, **kwargs)
             if response.status_code >= 400:
@@ -418,11 +447,12 @@ class PyrusClient:
         field_updates: list[dict[str, Any]] | None = None,
         attachments: list[dict[str, Any]] | None = None,
         action: str | None = None,
+        channel: dict[str, Any] | None = None,
         skip_auto_reopen: bool = True,
     ) -> None:
         """
         Комментарий к задаче. skip_auto_reopen=True — не переоткрывать закрытую задачу.
-        Текст можно не передавать, если обновляются только поля формы или вложения.
+        channel — внешний канал (например {"type": "max_messenger"} для комментария из MAX).
         """
         if not text and not field_updates and not attachments and not action:
             raise ValueError(
@@ -438,6 +468,8 @@ class PyrusClient:
             payload["attachments"] = attachments
         if action:
             payload["action"] = action
+        if channel:
+            payload["channel"] = channel
         await self._request("POST", url, json=payload)
 
     async def _prepare_attachments_for_pyrus(self, attachments: list[dict[str, Any]]) -> list[dict[str, Any]]:

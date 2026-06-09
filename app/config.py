@@ -28,6 +28,10 @@ class Settings:
     PYRUS_TASK_RATING_DATE_FIELD_ID = int(
         os.getenv("PYRUS_TASK_RATING_DATE_FIELD_ID", "17")
     )
+    # Проактивное обновление токена Pyrus API (секунды, 0 = только по 401).
+    PYRUS_TOKEN_REFRESH_INTERVAL_SECONDS = int(
+        os.getenv("PYRUS_TOKEN_REFRESH_INTERVAL_SECONDS", "900")
+    )
 
 
 settings = Settings()

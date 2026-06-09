@@ -9,9 +9,10 @@ from maxapi import Bot, Dispatcher
 from maxapi.context import MemoryContext
 from maxapi.enums.parse_mode import ParseMode
 from app.handlers import register_all_handlers
-from app.pyrus.instance import pyrus
+from app.pyrus.instance import pyrus, client as pyrus_client
 from app.data.instance import db
 from app.ticket_closure_notify import closure_poll_loop, run_closure_poll_cycle
+from app.pyrus_token_refresh import pyrus_token_refresh_loop
 
 logging.basicConfig(level=logging.INFO)
 
@@ -36,15 +37,20 @@ async def main():
     if sent:
         logging.info("При старте отправлено уведомлений о закрытии: %s", sent)
 
+    await pyrus_client.refresh_token_if_needed()
+
     poll_task = asyncio.create_task(closure_poll_loop(bot, pyrus))
+    token_task = asyncio.create_task(pyrus_token_refresh_loop(pyrus_client))
     try:
         await dp.start_polling(bot)
     finally:
-        poll_task.cancel()
-        try:
-            await poll_task
-        except asyncio.CancelledError:
-            pass
+        for task in (poll_task, token_task):
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        await pyrus_client.close()
 
 
 if __name__ == '__main__':

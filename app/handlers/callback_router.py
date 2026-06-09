@@ -14,9 +14,11 @@ from app.data.instance import db
 from app.user_profile import (
     get_profile,
     has_complete_profile,
-    profile_context_payload,
+    has_saved_company,
     save_profile_from_ticket_data,
+    ticket_start_context_payload,
 )
+from app.handlers.ticket_creation import continue_after_saved_company
 logger = logging.getLogger(__name__)
 
 
@@ -57,10 +59,21 @@ def register_callback_router(dp: Dispatcher, pyrus_service: PyrusService):
         await context.clear()
 
         user_id = callback.from_user.user_id
+        profile = get_profile(user_id)
+
+        if profile and has_saved_company(profile):
+            await continue_after_saved_company(
+                user_id=user_id,
+                context=context,
+                pyrus_service=pyrus_service,
+                reply=callback.message.answer,
+            )
+            return
+
+        if profile:
+            await context.update_data(**ticket_start_context_payload(profile))
+
         if has_complete_profile(user_id):
-            profile = get_profile(user_id)
-            if profile:
-                await context.update_data(**profile_context_payload(profile))
             await context.set_state(TicketStates.AWAITING_INN)
             await callback.message.edit(
                 text=CreateTaskMessages.INPUT_DATA_MESSAGE,
@@ -80,8 +93,18 @@ def register_callback_router(dp: Dispatcher, pyrus_service: PyrusService):
 
         user_id = callback.from_user.user_id
         profile = get_profile(user_id)
+
+        if profile and has_saved_company(profile):
+            await continue_after_saved_company(
+                user_id=user_id,
+                context=context,
+                pyrus_service=pyrus_service,
+                reply=callback.message.answer,
+            )
+            return
+
         if profile:
-            await context.update_data(**profile_context_payload(profile))
+            await context.update_data(**ticket_start_context_payload(profile))
 
         await context.set_state(TicketStates.AWAITING_INN)
 

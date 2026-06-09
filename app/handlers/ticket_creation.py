@@ -12,6 +12,7 @@ from app.user_profile import (
     profile_context_payload,
     save_profile,
     save_profile_from_ticket_data,
+    ticket_start_context_payload,
 )
 import re
 
@@ -107,11 +108,12 @@ def _attachment_display_name(data: dict) -> str:
     return "Файл"
 
 
-async def _go_to_theme_selection(
-    event: MessageCreated,
+async def go_to_theme_selection(
+    reply,
     context: MemoryContext,
     pyrus_service: PyrusService,
 ) -> None:
+    """Переход к выбору темы. reply — async (text, attachments=...)."""
     data = await context.get_data()
     contractor_id = data.get("contractor_id")
     name = data.get("name")
@@ -137,9 +139,32 @@ async def _go_to_theme_selection(
     keyboard = await CreateTaskKeyboards.build_themes_task_keyboard(items)
     await context.set_state(TicketStates.AWAITING_THEME)
 
-    await event.message.answer(
+    await reply(
         CreateTaskMessages.CHOOSE_THEME_TASK_MESSAGE,
         attachments=[keyboard],
+    )
+
+
+async def continue_after_saved_company(
+    *,
+    user_id: int,
+    context: MemoryContext,
+    pyrus_service: PyrusService,
+    reply,
+) -> None:
+    """После известного ИНН — сразу ФИО или выбор темы."""
+    profile = get_profile(user_id)
+    if profile:
+        await context.update_data(**ticket_start_context_payload(profile))
+
+    if has_complete_profile(user_id):
+        await go_to_theme_selection(reply, context, pyrus_service)
+        return
+
+    await context.set_state(TicketStates.AWAITING_NAME)
+    await reply(
+        CreateTaskMessages.INPUT_FULLNAME_MESSAGE,
+        attachments=[MainMenuKeyboards.create_back_to_menu_keyboard()],
     )
 
 
@@ -161,23 +186,35 @@ def register_ticket_creation(dp: Dispatcher, pyrus_service: PyrusService):
         contractor = await pyrus_service.get_contractor_info(inn)
 
         if contractor:
+            user_id = event.from_user.user_id
             await context.update_data(
                 inn=inn,
                 company_name=contractor.get("name"),
                 contractor_id=contractor.get("id"),
             )
-            user_id = event.from_user.user_id
+            save_profile(
+                max_user_id=user_id,
+                inn=inn,
+                company_name=contractor.get("name"),
+                pyrus_contractor_task_id=contractor.get("id"),
+                max_username=getattr(event.from_user, "username", None),
+                max_full_name=getattr(event.from_user, "name", None),
+            )
             data = await context.get_data()
 
             # Уже есть ФИО/телефон/ПК в сессии или в БД — не показываем повторно запрос ФИО
             if data.get("name") and data.get("phone") and data.get("pc_name"):
-                await _go_to_theme_selection(event, context, pyrus_service)
+                await go_to_theme_selection(
+                    event.message.answer, context, pyrus_service
+                )
                 return
             if has_complete_profile(user_id):
                 profile = get_profile(user_id)
                 if profile:
                     await context.update_data(**profile_context_payload(profile))
-                await _go_to_theme_selection(event, context, pyrus_service)
+                await go_to_theme_selection(
+                    event.message.answer, context, pyrus_service
+                )
                 return
 
             company_name = contractor.get("name") or "—"
@@ -297,7 +334,7 @@ def register_ticket_creation(dp: Dispatcher, pyrus_service: PyrusService):
             max_username=getattr(event.from_user, "username", None),
             max_full_name=getattr(event.from_user, "name", None),
         )
-        await _go_to_theme_selection(event, context, pyrus_service)
+        await go_to_theme_selection(event.message.answer, context, pyrus_service)
 
     @dp.message_created(TicketStates.AWAITING_PROBLEM)
     async def process_problem(event: MessageCreated, context: MemoryContext):
