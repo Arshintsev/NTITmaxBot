@@ -1,0 +1,20 @@
+services:
+  ntitmax-bot:
+    build: .
+    container_name: ntitmax-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      BOT_DB_PATH: /app/data/bot.db
+    volumes:
+      - bot-data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib; raise SystemExit(0 if pathlib.Path('/app/data').is_dir() else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  bot-data:
